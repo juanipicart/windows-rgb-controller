@@ -29,8 +29,6 @@ class Effect(ABC):
     name: str
     # Static effects only need re-sending occasionally, not every frame.
     animated: bool = True
-    # What a static-only device should show for this effect; None = leave it.
-    static_color: Color | None = None
 
     @abstractmethod
     def render(self, positions: Sequence[float], t: float) -> list[Color]:
@@ -43,7 +41,6 @@ class Static(Effect):
 
     def __init__(self, color: Color) -> None:
         self.color = color
-        self.static_color = color
 
     def render(self, positions: Sequence[float], t: float) -> list[Color]:
         return [self.color] * len(positions)
@@ -55,7 +52,6 @@ class Breathing(Effect):
     def __init__(self, color: Color, period: float = 4.0) -> None:
         self.color = color
         self.period = period
-        self.static_color = color
 
     def render(self, positions: Sequence[float], t: float) -> list[Color]:
         # Squared sine eases in/out so the dim end lingers like real breathing.

@@ -9,8 +9,12 @@ from __future__ import annotations
 
 from abc import ABC, abstractmethod
 from collections.abc import Sequence
+from typing import TYPE_CHECKING
 
 from rgbctl.color import Color
+
+if TYPE_CHECKING:
+    from rgbctl.effects import Effect
 
 
 class Device(ABC):
@@ -21,13 +25,17 @@ class Device(ABC):
     # False once the device has failed in a way only reconnecting can fix
     # (e.g. USB handle gone after unplug or sleep).
     healthy: bool = True
-    # Devices that can only hold a fixed color (e.g. writes go to flash).
-    # The engine sends them Effect.static_color instead of animation frames.
-    static_only: bool = False
+    # Devices that run their own built-in effects instead of taking frames
+    # (e.g. their lighting writes go to flash). The engine calls
+    # apply_effect() for them rather than set_colors().
+    hardware_effects: bool = False
 
     @abstractmethod
     def set_colors(self, colors: Sequence[Color]) -> None:
         """Set every LED; len(colors) must equal led_count."""
+
+    def apply_effect(self, effect: Effect, brightness: float) -> None:
+        raise NotImplementedError
 
     def fill(self, color: Color) -> None:
         self.set_colors([color] * self.led_count)

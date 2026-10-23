@@ -11,8 +11,9 @@ port = 6742
 enabled = true
 channels = [204, 0]
 
-# Cooler Master CK721 keyboard. Static colors only: its color command is
-# stored in the keyboard's flash, so it's never animated (see driver docs).
+# Cooler Master CK721 keyboard. Its lighting settings are stored in flash, so
+# it never gets frames: it switches to its own built-in equivalent of the
+# current effect (see driver docs).
 [native.ck721]
 enabled = true
 

@@ -90,16 +90,14 @@ class Engine:
         ok = True
         brightness = self.brightness
         for dev, pos in zip(self.devices, self.positions):
-            if dev.static_only:
-                if effect.static_color is None:
-                    continue
-                colors = [effect.static_color] * dev.led_count
-            else:
-                colors = effect.render(pos, t)
-            if brightness < 1.0:
-                colors = [scale(c, brightness) for c in colors]
             try:
-                dev.set_colors(colors)
+                if dev.hardware_effects:
+                    dev.apply_effect(effect, brightness)
+                else:
+                    colors = effect.render(pos, t)
+                    if brightness < 1.0:
+                        colors = [scale(c, brightness) for c in colors]
+                    dev.set_colors(colors)
             except Exception as exc:  # keep animating the other devices
                 ok = False
                 if failing is None or dev.name not in failing:
