@@ -9,6 +9,7 @@ description = "Personal RGB controller for syncing PC lighting"
 requires-python = ">=3.11"
 dependencies = [
     "openrgb-python>=0.3",
+    "hidapi>=0.14",
 ]
 
 [project.scripts]

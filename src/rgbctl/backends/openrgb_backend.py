@@ -56,12 +56,14 @@ class OpenRGBBackend(Backend):
         exe: Path = DEFAULT_EXE,
         launch: bool = True,
         zone_sizes: Sequence[ZoneSize] = (),
+        exclude: set[str] = frozenset(),
     ) -> None:
         self.host = host
         self.port = port
         self.exe = exe
         self.launch = launch
         self.zone_sizes = list(zone_sizes)
+        self.exclude = set(exclude)
         self._client: OpenRGBClient | None = None
 
     def _try_connect(self) -> OpenRGBClient | None:
@@ -131,7 +133,7 @@ class OpenRGBBackend(Backend):
         assert self._client is not None
         # Devices with unsized ARGB zones report 0 LEDs; keep them so they're
         # visible, callers skip them when writing colors.
-        return [OpenRGBDevice(d) for d in self._client.devices]
+        return [OpenRGBDevice(d) for d in self._client.devices if d.name not in self.exclude]
 
     def close(self) -> None:
         if self._client is not None:

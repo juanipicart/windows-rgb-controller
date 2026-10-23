@@ -6,26 +6,50 @@ import sys
 from pathlib import Path
 
 from rgbctl import config
+from rgbctl.backends.corsair_lighting_node import LightingNodeBackend
 from rgbctl.backends.openrgb_backend import OpenRGBBackend
 from rgbctl.color import Color
-from rgbctl.device import Device
+from rgbctl.device import Backend, Device
 from rgbctl.effects import Breathing, Effect, Rainbow, Static, Wave
 from rgbctl.engine import Engine
 
 
-def _discover(args: argparse.Namespace) -> tuple[OpenRGBBackend, list[Device]]:
-    cfg = config.load(args.config)
-    backend = OpenRGBBackend(
-        host=cfg.openrgb_host,
-        port=args.port or cfg.openrgb_port,
-        launch=not args.no_launch,
-        zone_sizes=cfg.zones,
-    )
-    return backend, backend.discover()
+class Session:
+    """All backends for one run; native drivers claim devices first."""
+
+    def __init__(self, args: argparse.Namespace) -> None:
+        cfg = config.load(args.config)
+        self.backends: list[Backend] = []
+        self.devices: list[Device] = []
+        claimed: set[str] = set()
+
+        if cfg.lighting_node_channels is not None:
+            node = LightingNodeBackend(cfg.lighting_node_channels)
+            self._add(node)
+            claimed |= node.claimed_names
+
+        self._add(
+            OpenRGBBackend(
+                host=cfg.openrgb_host,
+                port=args.port or cfg.openrgb_port,
+                launch=not args.no_launch,
+                zone_sizes=cfg.zones,
+                exclude=claimed,
+            )
+        )
+
+    def _add(self, backend: Backend) -> None:
+        self.backends.append(backend)
+        self.devices.extend(backend.discover())
+
+    def close(self) -> None:
+        for backend in self.backends:
+            backend.close()
 
 
 def cmd_list(args: argparse.Namespace) -> int:
-    backend, devices = _discover(args)
+    session = Session(args)
+    devices = session.devices
     try:
         if not devices:
             print("No devices found.")
@@ -35,12 +59,13 @@ def cmd_list(args: argparse.Namespace) -> int:
             print(f"[{i}] {dev.name:<40} {dev.kind:<12} {dev.led_count:>4} LEDs  ({dev.backend}){note}")
         return 0
     finally:
-        backend.close()
+        session.close()
 
 
 def cmd_set(args: argparse.Namespace) -> int:
     color = Color.parse(args.color)
-    backend, devices = _discover(args)
+    session = Session(args)
+    devices = session.devices
     try:
         failed = 0
         for dev in devices:
@@ -55,7 +80,7 @@ def cmd_set(args: argparse.Namespace) -> int:
                 print(f"  {dev.name}: FAILED ({exc})", file=sys.stderr)
         return 1 if failed else 0
     finally:
-        backend.close()
+        session.close()
 
 
 def _build_effect(args: argparse.Namespace) -> Effect:
@@ -74,7 +99,8 @@ def _build_effect(args: argparse.Namespace) -> Effect:
 
 def cmd_effect(args: argparse.Namespace) -> int:
     effect = _build_effect(args)
-    backend, devices = _discover(args)
+    session = Session(args)
+    devices = session.devices
     engine = Engine(devices, fps=args.fps, brightness=args.brightness, sync=args.sync)
     print(f"Running {args.name} on {len(engine.devices)} devices at {args.fps:g} fps (Ctrl+C to stop)")
     try:
@@ -82,7 +108,7 @@ def cmd_effect(args: argparse.Namespace) -> int:
     except KeyboardInterrupt:
         pass
     finally:
-        backend.close()
+        session.close()
     return 0
 
 
