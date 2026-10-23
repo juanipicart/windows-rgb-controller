@@ -1,0 +1,18 @@
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "rgbctl"
+version = "0.1.0"
+description = "Personal RGB controller for syncing PC lighting"
+requires-python = ">=3.11"
+dependencies = [
+    "openrgb-python>=0.3",
+]
+
+[project.scripts]
+rgbctl = "rgbctl.cli:main"
+
+[tool.setuptools.packages.find]
+where = ["src"]

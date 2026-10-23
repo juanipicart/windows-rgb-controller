@@ -1,0 +1,33 @@
+# rgbctl configuration
+
+[openrgb]
+host = "127.0.0.1"
+port = 6742
+
+# Addressable zones (fan/ARGB headers) report 0 LEDs until sized.
+# Oversizing is harmless (extra data falls off the end of the chain), but
+# exact counts matter for spatial effects like waves.
+
+# Corsair Lighting Node Core: 6x QL120 fans, 34 LEDs each.
+[[zones]]
+device = "Corsair Lighting Node Core"
+zone = "Corsair RGB Header 1"
+leds = 204
+
+# ASUS ARGB header 1: MSI MAG Coreliquid A15 360. Pump and 3 fans are wired
+# in parallel (splitter), so all four mirror the same 8-LED ring.
+[[zones]]
+device = "ASUS ROG CROSSHAIR X870E APEX"
+zone = "Addressable RGB Header 1"
+leds = 8
+
+# ASUS ARGB headers 2 and 3: nothing connected.
+[[zones]]
+device = "ASUS ROG CROSSHAIR X870E APEX"
+zone = "Addressable RGB Header 2"
+leds = 0
+
+[[zones]]
+device = "ASUS ROG CROSSHAIR X870E APEX"
+zone = "Addressable RGB Header 3"
+leds = 0
