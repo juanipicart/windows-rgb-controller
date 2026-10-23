@@ -64,6 +64,7 @@ class OpenRGBBackend(Backend):
         self.launch = launch
         self.zone_sizes = list(zone_sizes)
         self.exclude = set(exclude)
+        self.server_device_count = 0
         self._client: OpenRGBClient | None = None
 
     def _try_connect(self) -> OpenRGBClient | None:
@@ -126,6 +127,9 @@ class OpenRGBBackend(Backend):
             self._wait_for_detection(client, settle, timeout)
         self._apply_zone_sizes(client)
         self._client = client
+        # Including devices excluded in favor of native drivers, so callers
+        # can tell when the server has detected something new.
+        self.server_device_count = len(client.devices)
 
     def discover(self) -> list[Device]:
         if self._client is None:

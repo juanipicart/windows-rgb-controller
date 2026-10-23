@@ -18,6 +18,9 @@ class Device(ABC):
     kind: str
     led_count: int
     backend: str
+    # False once the device has failed in a way only reconnecting can fix
+    # (e.g. USB handle gone after unplug or sleep).
+    healthy: bool = True
 
     @abstractmethod
     def set_colors(self, colors: Sequence[Color]) -> None:

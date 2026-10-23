@@ -2,59 +2,60 @@ from __future__ import annotations
 
 import argparse
 import logging
+import logging.handlers
+import os
+import subprocess
 import sys
+import time
 from pathlib import Path
+from typing import Any
 
-from rgbctl import config
-from rgbctl.backends.corsair_lighting_node import LightingNodeBackend
-from rgbctl.backends.openrgb_backend import OpenRGBBackend
+from rgbctl import config, ipc
 from rgbctl.color import Color
-from rgbctl.device import Backend, Device
-from rgbctl.effects import Breathing, Effect, Rainbow, Static, Wave
+from rgbctl.effects import EFFECT_NAMES, from_spec, normalize_spec
 from rgbctl.engine import Engine
+from rgbctl.session import Session
+
+STARTUP_SHORTCUT = (
+    Path(os.environ.get("APPDATA", "")) / "Microsoft" / "Windows" / "Start Menu" / "Programs" / "Startup" / "rgbctl.lnk"
+)
 
 
-class Session:
-    """All backends for one run; native drivers claim devices first."""
+def _session(args: argparse.Namespace) -> Session:
+    return Session(config.load(args.config), port=args.port, launch_openrgb=not args.no_launch)
 
-    def __init__(self, args: argparse.Namespace) -> None:
-        cfg = config.load(args.config)
-        self.backends: list[Backend] = []
-        self.devices: list[Device] = []
-        claimed: set[str] = set()
 
-        if cfg.lighting_node_channels is not None:
-            node = LightingNodeBackend(cfg.lighting_node_channels)
-            self._add(node)
-            claimed |= node.claimed_names
+def _send_to_daemon(spec: dict[str, Any]) -> bool:
+    """Apply spec via the running daemon; False if there isn't one."""
+    try:
+        reply = ipc.request({"cmd": "apply", "spec": spec})
+    except ipc.DaemonNotRunning:
+        return False
+    applied = reply["spec"]
+    print(f"daemon: {applied['name']} {applied['color'] if applied['name'] in ('static', 'breathing') else ''}".rstrip())
+    return True
 
-        self._add(
-            OpenRGBBackend(
-                host=cfg.openrgb_host,
-                port=args.port or cfg.openrgb_port,
-                launch=not args.no_launch,
-                zone_sizes=cfg.zones,
-                exclude=claimed,
-            )
-        )
 
-    def _add(self, backend: Backend) -> None:
-        self.backends.append(backend)
-        self.devices.extend(backend.discover())
-
-    def close(self) -> None:
-        for backend in self.backends:
-            backend.close()
+# -- one-shot commands --------------------------------------------------------
 
 
 def cmd_list(args: argparse.Namespace) -> int:
-    session = Session(args)
-    devices = session.devices
     try:
-        if not devices:
+        status = ipc.request({"cmd": "status"})
+    except ipc.DaemonNotRunning:
+        pass
+    else:
+        # The daemon owns the devices; ask it instead of opening them twice.
+        for i, name in enumerate(status["devices"]):
+            print(f"[{i}] {name}")
+        return 0
+
+    session = _session(args)
+    try:
+        if not session.devices:
             print("No devices found.")
             return 1
-        for i, dev in enumerate(devices):
+        for i, dev in enumerate(session.devices):
             note = "  <- no LEDs sized, configure zones" if dev.led_count == 0 else ""
             print(f"[{i}] {dev.name:<40} {dev.kind:<12} {dev.led_count:>4} LEDs  ({dev.backend}){note}")
         return 0
@@ -64,11 +65,14 @@ def cmd_list(args: argparse.Namespace) -> int:
 
 def cmd_set(args: argparse.Namespace) -> int:
     color = Color.parse(args.color)
-    session = Session(args)
-    devices = session.devices
+    spec = {"name": "off"} if args.color.lower() in ("off", "black") else {"name": "static", "color": args.color}
+    if _send_to_daemon(spec):
+        return 0
+
+    session = _session(args)
     try:
         failed = 0
-        for dev in devices:
+        for dev in session.devices:
             if dev.led_count == 0:
                 print(f"  {dev.name}: skipped (no LEDs sized)")
                 continue
@@ -83,32 +87,154 @@ def cmd_set(args: argparse.Namespace) -> int:
         session.close()
 
 
-def _build_effect(args: argparse.Namespace) -> Effect:
-    color = Color.parse(args.color) if args.color else Color.parse("purple")
-    match args.name:
-        case "static":
-            return Static(color)
-        case "breathing":
-            return Breathing(color, period=args.period or 4.0)
-        case "rainbow":
-            return Rainbow(period=args.period or 10.0)
-        case "wave":
-            return Wave(period=args.period or 5.0, spread=args.spread)
-    raise ValueError(args.name)
-
-
 def cmd_effect(args: argparse.Namespace) -> int:
-    effect = _build_effect(args)
-    session = Session(args)
-    devices = session.devices
-    engine = Engine(devices, fps=args.fps, brightness=args.brightness, sync=args.sync)
+    spec = normalize_spec(
+        {
+            "name": args.name,
+            "color": args.color or "purple",
+            "period": args.period,
+            "spread": args.spread,
+            "sync": args.sync,
+            "brightness": args.brightness,
+        }
+    )
+    if args.duration is None and _send_to_daemon(spec):
+        return 0
+
+    session = _session(args)
+    engine = Engine(session.devices, fps=args.fps, brightness=spec["brightness"], sync=spec["sync"])
     print(f"Running {args.name} on {len(engine.devices)} devices at {args.fps:g} fps (Ctrl+C to stop)")
     try:
-        engine.run(effect, duration=args.duration)
+        engine.run(from_spec(spec), duration=args.duration)
     except KeyboardInterrupt:
         pass
     finally:
         session.close()
+    return 0
+
+
+# -- daemon management --------------------------------------------------------
+
+
+def _setup_daemon_logging() -> None:
+    from rgbctl.daemon import log_path
+
+    path = log_path()
+    path.parent.mkdir(parents=True, exist_ok=True)
+    handlers: list[logging.Handler] = [
+        logging.handlers.RotatingFileHandler(path, maxBytes=1_000_000, backupCount=3, encoding="utf-8")
+    ]
+    if sys.stderr is not None:  # None under pythonw.exe
+        handlers.append(logging.StreamHandler())
+    logging.basicConfig(
+        level=logging.INFO, format="%(asctime)s %(levelname)s %(name)s: %(message)s", handlers=handlers, force=True
+    )
+
+
+def cmd_daemon(args: argparse.Namespace) -> int:
+    from rgbctl.daemon import Daemon
+
+    _setup_daemon_logging()
+    daemon = Daemon(config_path=args.config)
+    try:
+        daemon.start()
+    except RuntimeError as exc:
+        logging.error("%s", exc)
+        return 1
+    try:
+        if args.no_tray:
+            daemon.wait()
+        else:
+            from rgbctl.tray import run_tray
+
+            run_tray(daemon)
+    except KeyboardInterrupt:
+        pass
+    finally:
+        daemon.shutdown()
+    return 0
+
+
+def _daemon_command(args: argparse.Namespace) -> list[str]:
+    """Command line that starts the daemon without a console window."""
+    pythonw = Path(sys.executable).with_name("pythonw.exe")
+    cfg = config.load(args.config)
+    cmd = [str(pythonw), "-m", "rgbctl"]
+    if cfg.path is not None:
+        cmd += ["--config", str(cfg.path.resolve())]
+    return cmd + ["daemon"]
+
+
+def cmd_start(args: argparse.Namespace) -> int:
+    if ipc.is_running():
+        print("Daemon already running.")
+        return 0
+    subprocess.Popen(
+        _daemon_command(args),
+        creationflags=subprocess.DETACHED_PROCESS | subprocess.CREATE_NEW_PROCESS_GROUP,
+        close_fds=True,
+    )
+    deadline = time.monotonic() + 15
+    while time.monotonic() < deadline:
+        if ipc.is_running():
+            print("Daemon started.")
+            return 0
+        time.sleep(0.3)
+    from rgbctl.daemon import log_path
+
+    print(f"Daemon did not come up; see {log_path()}", file=sys.stderr)
+    return 1
+
+
+def cmd_stop(args: argparse.Namespace) -> int:
+    try:
+        ipc.request({"cmd": "quit"})
+    except ipc.DaemonNotRunning:
+        print("Daemon not running.")
+        return 0
+    deadline = time.monotonic() + 10
+    while ipc.is_running() and time.monotonic() < deadline:
+        time.sleep(0.2)
+    print("Daemon stopped.")
+    return 0
+
+
+def cmd_status(args: argparse.Namespace) -> int:
+    try:
+        status = ipc.request({"cmd": "status"})
+    except ipc.DaemonNotRunning:
+        print("Daemon not running.")
+        return 1
+    spec = status["spec"]
+    print(f"effect:     {spec['name']}" + (" (synced)" if spec["name"] == "wave" and spec["sync"] else ""))
+    print(f"color:      {spec['color']}")
+    print(f"brightness: {spec['brightness']:.0%}")
+    print(f"devices:    {', '.join(status['devices']) or 'none (connecting...)'}")
+    return 0
+
+
+def cmd_install_startup(args: argparse.Namespace) -> int:
+    cmd = _daemon_command(args)
+    target, arguments = cmd[0], subprocess.list2cmdline(cmd[1:])
+    workdir = str(Path(target).parent)
+    # WScript.Shell is the standard way to create a .lnk without extra packages.
+    ps = (
+        "$s = (New-Object -ComObject WScript.Shell).CreateShortcut($env:LNK);"
+        "$s.TargetPath = $env:TARGET; $s.Arguments = $env:ARGS; $s.WorkingDirectory = $env:WORKDIR;"
+        "$s.Description = 'rgbctl lighting daemon'; $s.Save()"
+    )
+    env = {**os.environ, "LNK": str(STARTUP_SHORTCUT), "TARGET": target, "ARGS": arguments, "WORKDIR": workdir}
+    subprocess.run(["powershell", "-NoProfile", "-Command", ps], env=env, check=True)
+    print(f"Installed: {STARTUP_SHORTCUT}")
+    return 0
+
+
+def cmd_uninstall_startup(args: argparse.Namespace) -> int:
+    try:
+        STARTUP_SHORTCUT.unlink()
+        print(f"Removed: {STARTUP_SHORTCUT}")
+    except FileNotFoundError:
+        print("Not installed.")
     return 0
 
 
@@ -121,23 +247,38 @@ def main(argv: list[str] | None = None) -> int:
 
     sub.add_parser("list", help="list detected devices").set_defaults(func=cmd_list)
 
-    p_set = sub.add_parser("set", help="set every device to one color")
-    p_set.add_argument("color", help="name (red), hex (#ff0000) or r,g,b")
+    p_set = sub.add_parser("set", help="set every device to one color ('off' turns lights off)")
+    p_set.add_argument("color", help="name (red), hex (#ff0000), r,g,b or off")
     p_set.set_defaults(func=cmd_set)
 
-    p_fx = sub.add_parser("effect", help="run an animated effect")
-    p_fx.add_argument("name", choices=["static", "breathing", "rainbow", "wave"])
+    p_fx = sub.add_parser("effect", help="run an animated effect (via the daemon if it's running)")
+    p_fx.add_argument("name", choices=[n for n in EFFECT_NAMES if n != "off"])
     p_fx.add_argument("color", nargs="?", help="color for static/breathing")
     p_fx.add_argument("--period", type=float, help="seconds per cycle")
     p_fx.add_argument("--spread", type=float, default=1.0, help="rainbows across the strip (wave)")
     p_fx.add_argument("--sync", action="store_true", help="every device shows the same pattern")
     p_fx.add_argument("--fps", type=float, default=30.0)
     p_fx.add_argument("--brightness", type=float, default=1.0, help="0.0-1.0")
-    p_fx.add_argument("--duration", type=float, help="stop after N seconds")
+    p_fx.add_argument("--duration", type=float, help="run directly for N seconds instead of via the daemon")
     p_fx.set_defaults(func=cmd_effect)
 
+    p_daemon = sub.add_parser("daemon", help="run the background service in this process")
+    p_daemon.add_argument("--no-tray", action="store_true", help="no system tray icon")
+    p_daemon.set_defaults(func=cmd_daemon)
+
+    sub.add_parser("start", help="start the background service").set_defaults(func=cmd_start)
+    sub.add_parser("stop", help="stop the background service").set_defaults(func=cmd_stop)
+    sub.add_parser("status", help="show what the background service is doing").set_defaults(func=cmd_status)
+    sub.add_parser("install-startup", help="start the service when you log in").set_defaults(
+        func=cmd_install_startup
+    )
+    sub.add_parser("uninstall-startup", help="don't start the service at login").set_defaults(
+        func=cmd_uninstall_startup
+    )
+
     args = parser.parse_args(argv)
-    logging.basicConfig(level=logging.INFO, format="%(levelname)s: %(message)s")
+    if args.func is not cmd_daemon:
+        logging.basicConfig(level=logging.INFO, format="%(levelname)s: %(message)s")
     return args.func(args)
 
 

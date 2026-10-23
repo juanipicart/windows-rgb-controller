@@ -10,7 +10,8 @@ from __future__ import annotations
 import colorsys
 import math
 from abc import ABC, abstractmethod
-from collections.abc import Sequence
+from collections.abc import Mapping, Sequence
+from typing import Any
 
 from rgbctl.color import Color
 
@@ -26,6 +27,8 @@ def scale(color: Color, factor: float) -> Color:
 
 class Effect(ABC):
     name: str
+    # Static effects only need re-sending occasionally, not every frame.
+    animated: bool = True
 
     @abstractmethod
     def render(self, positions: Sequence[float], t: float) -> list[Color]:
@@ -34,6 +37,7 @@ class Effect(ABC):
 
 class Static(Effect):
     name = "static"
+    animated = False
 
     def __init__(self, color: Color) -> None:
         self.color = color
@@ -81,4 +85,46 @@ class Wave(Effect):
         return [hsv(p * self.spread - offset) for p in positions]
 
 
-EFFECTS = {cls.name: cls for cls in (Static, Breathing, Rainbow, Wave)}
+EFFECT_NAMES = ("static", "breathing", "rainbow", "wave", "off")
+
+# A spec is the serializable description of what's running: shared by the
+# CLI, the daemon's saved state and the tray menu.
+DEFAULT_SPEC: dict[str, Any] = {
+    "name": "wave",
+    "color": "purple",
+    "period": None,  # None = the effect's own default
+    "spread": 1.0,
+    "sync": True,
+    "brightness": 1.0,
+}
+
+
+def normalize_spec(spec: Mapping[str, Any]) -> dict[str, Any]:
+    """Fill defaults and validate; raises ValueError on bad input."""
+    out = {**DEFAULT_SPEC, **{k: v for k, v in spec.items() if k in DEFAULT_SPEC}}
+    if out["name"] not in EFFECT_NAMES:
+        raise ValueError(f"unknown effect {out['name']!r}")
+    Color.parse(out["color"])
+    if out["period"] is not None and float(out["period"]) <= 0:
+        raise ValueError("period must be positive")
+    out["brightness"] = min(max(float(out["brightness"]), 0.0), 1.0)
+    out["sync"] = bool(out["sync"])
+    return out
+
+
+def from_spec(spec: Mapping[str, Any]) -> Effect:
+    spec = normalize_spec(spec)
+    color = Color.parse(spec["color"])
+    period = spec["period"]
+    match spec["name"]:
+        case "static":
+            return Static(color)
+        case "off":
+            return Static(Color(0, 0, 0))
+        case "breathing":
+            return Breathing(color, period=period or 4.0)
+        case "rainbow":
+            return Rainbow(period=period or 10.0)
+        case "wave":
+            return Wave(period=period or 5.0, spread=spec["spread"])
+    raise AssertionError(spec["name"])

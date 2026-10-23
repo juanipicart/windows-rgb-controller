@@ -10,6 +10,8 @@ requires-python = ">=3.11"
 dependencies = [
     "openrgb-python>=0.3",
     "hidapi>=0.14",
+    "pystray>=0.19",
+    "Pillow>=10",
 ]
 
 [project.scripts]

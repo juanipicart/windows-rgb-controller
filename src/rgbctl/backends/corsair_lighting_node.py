@@ -98,7 +98,10 @@ class LightingNodeDevice(Device):
             self._closed = True
             self._lock.notify()
         self._thread.join(timeout=2.0)
-        self._hid.close()
+        try:
+            self._hid.close()
+        except OSError:
+            pass
 
     # -- writer thread ------------------------------------------------------
 
@@ -115,7 +118,9 @@ class LightingNodeDevice(Device):
                 elif self._software_mode and time.monotonic() - self._last_commit >= KEEPALIVE_INTERVAL:
                     self._send_batch([self._commit_packet()])
             except OSError as exc:
-                log.warning("%s: USB write failed: %s", self.name, exc)
+                if self.healthy:
+                    log.warning("%s: USB write failed: %s", self.name, exc)
+                self.healthy = False
             finally:
                 with self._lock:
                     self._lock.notify_all()  # wake flush()
