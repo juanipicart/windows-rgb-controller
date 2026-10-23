@@ -26,6 +26,7 @@ class Config:
     # LEDs per channel for the native Corsair Lighting Node driver;
     # None leaves the device to OpenRGB.
     lighting_node_channels: list[int] | None = None
+    ck721: bool = False
     path: Path | None = None
 
 
@@ -58,5 +59,6 @@ def load(path: Path | None = None) -> Config:
         lighting_node_channels=(
             [int(n) for n in node["channels"]] if node.get("enabled", True) and "channels" in node else None
         ),
+        ck721=bool(data.get("native", {}).get("ck721", {}).get("enabled", False)),
         path=candidate,
     )

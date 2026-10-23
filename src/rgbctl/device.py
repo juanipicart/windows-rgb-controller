@@ -21,6 +21,9 @@ class Device(ABC):
     # False once the device has failed in a way only reconnecting can fix
     # (e.g. USB handle gone after unplug or sleep).
     healthy: bool = True
+    # Devices that can only hold a fixed color (e.g. writes go to flash).
+    # The engine sends them Effect.static_color instead of animation frames.
+    static_only: bool = False
 
     @abstractmethod
     def set_colors(self, colors: Sequence[Color]) -> None:

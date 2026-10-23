@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import logging
 
+from rgbctl.backends.cooler_master_ck721 import CK721Backend
 from rgbctl.backends.corsair_lighting_node import LightingNodeBackend
 from rgbctl.backends.openrgb_backend import OpenRGBBackend
 from rgbctl.config import Config
@@ -31,6 +32,9 @@ class Session:
                 node = LightingNodeBackend(cfg.lighting_node_channels)
                 self._add(node)
                 claimed |= node.claimed_names
+
+            if cfg.ck721:
+                self._add(CK721Backend())
 
             openrgb = OpenRGBBackend(
                 host=cfg.openrgb_host,

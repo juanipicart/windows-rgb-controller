@@ -11,6 +11,11 @@ port = 6742
 enabled = true
 channels = [204, 0]
 
+# Cooler Master CK721 keyboard. Static colors only: its color command is
+# stored in the keyboard's flash, so it's never animated (see driver docs).
+[native.ck721]
+enabled = true
+
 # Addressable zones (fan/ARGB headers) report 0 LEDs until sized.
 # Oversizing is harmless (extra data falls off the end of the chain), but
 # exact counts matter for spatial effects like waves.

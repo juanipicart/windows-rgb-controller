@@ -90,7 +90,12 @@ class Engine:
         ok = True
         brightness = self.brightness
         for dev, pos in zip(self.devices, self.positions):
-            colors = effect.render(pos, t)
+            if dev.static_only:
+                if effect.static_color is None:
+                    continue
+                colors = [effect.static_color] * dev.led_count
+            else:
+                colors = effect.render(pos, t)
             if brightness < 1.0:
                 colors = [scale(c, brightness) for c in colors]
             try:
