@@ -25,6 +25,11 @@ log = logging.getLogger(__name__)
 DEFAULT_EXE = Path(r"C:\Program Files\OpenRGB\OpenRGB.exe")
 
 
+def fingerprint(client: OpenRGBClient) -> tuple[tuple[str, int], ...]:
+    """What the server currently exposes, to notice late-detected devices."""
+    return tuple((d.name, len(d.leds)) for d in client.devices)
+
+
 class OpenRGBDevice(Device):
     backend = "openrgb"
 
@@ -64,7 +69,7 @@ class OpenRGBBackend(Backend):
         self.launch = launch
         self.zone_sizes = list(zone_sizes)
         self.exclude = set(exclude)
-        self.server_device_count = 0
+        self.server_fingerprint: tuple[tuple[str, int], ...] = ()
         self._client: OpenRGBClient | None = None
 
     def _try_connect(self) -> OpenRGBClient | None:
@@ -127,17 +132,25 @@ class OpenRGBBackend(Backend):
             self._wait_for_detection(client, settle, timeout)
         self._apply_zone_sizes(client)
         self._client = client
-        # Including devices excluded in favor of native drivers, so callers
-        # can tell when the server has detected something new.
-        self.server_device_count = len(client.devices)
+        self.server_fingerprint = fingerprint(client)
 
     def discover(self) -> list[Device]:
         if self._client is None:
             self.connect()
         assert self._client is not None
-        # Devices with unsized ARGB zones report 0 LEDs; keep them so they're
-        # visible, callers skip them when writing colors.
-        return [OpenRGBDevice(d) for d in self._client.devices if d.name not in self.exclude]
+        devices = []
+        for d in self._client.devices:
+            if d.name in self.exclude:
+                continue
+            if not d.name:
+                # OpenRGB registers a blank controller when init fails (seen
+                # with the ASUS Aura controller right after boot); don't drive it.
+                log.warning("skipping unnamed OpenRGB device %d (failed to initialize)", d.id)
+                continue
+            # Devices with unsized ARGB zones report 0 LEDs; keep them so they're
+            # visible, callers skip them when writing colors.
+            devices.append(OpenRGBDevice(d))
+        return devices
 
     def close(self) -> None:
         if self._client is not None:

@@ -2,18 +2,29 @@
 
 from __future__ import annotations
 
+import logging
+
 from rgbctl.backends.corsair_lighting_node import LightingNodeBackend
 from rgbctl.backends.openrgb_backend import OpenRGBBackend
 from rgbctl.config import Config
 from rgbctl.device import Backend, Device
 
+log = logging.getLogger(__name__)
+
 
 class Session:
     """All backends for one run; native drivers claim devices first."""
 
-    def __init__(self, cfg: Config, port: int | None = None, launch_openrgb: bool = True) -> None:
+    def __init__(
+        self,
+        cfg: Config,
+        port: int | None = None,
+        launch_openrgb: bool = True,
+        require_openrgb: bool = True,
+    ) -> None:
         self.backends: list[Backend] = []
         self.devices: list[Device] = []
+        self.openrgb: OpenRGBBackend | None = None
         claimed: set[str] = set()
         try:
             if cfg.lighting_node_channels is not None:
@@ -21,22 +32,26 @@ class Session:
                 self._add(node)
                 claimed |= node.claimed_names
 
-            self._add(
-                OpenRGBBackend(
-                    host=cfg.openrgb_host,
-                    port=port or cfg.openrgb_port,
-                    launch=launch_openrgb,
-                    zone_sizes=cfg.zones,
-                    exclude=claimed,
-                )
+            openrgb = OpenRGBBackend(
+                host=cfg.openrgb_host,
+                port=port or cfg.openrgb_port,
+                launch=launch_openrgb,
+                zone_sizes=cfg.zones,
+                exclude=claimed,
             )
+            try:
+                self._add(openrgb)
+                self.openrgb = openrgb
+            except (OSError, RuntimeError) as exc:
+                if require_openrgb:
+                    raise
+                # e.g. the service is still on its delayed start after boot;
+                # run the native devices meanwhile.
+                self.backends.remove(openrgb)
+                log.warning("OpenRGB unavailable (%s); continuing with native devices only", exc)
         except BaseException:
             self.close()
             raise
-
-    @property
-    def openrgb_device_count(self) -> int:
-        return sum(b.server_device_count for b in self.backends if isinstance(b, OpenRGBBackend))
 
     def _add(self, backend: Backend) -> None:
         self.backends.append(backend)

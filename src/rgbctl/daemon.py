@@ -22,6 +22,7 @@ from typing import Any, Callable
 from openrgb import OpenRGBClient
 
 from rgbctl import config, ipc
+from rgbctl.backends.openrgb_backend import fingerprint
 from rgbctl.effects import DEFAULT_SPEC, from_spec, normalize_spec
 from rgbctl.engine import Engine, StopReason
 from rgbctl.session import Session
@@ -29,9 +30,10 @@ from rgbctl.session import Session
 log = logging.getLogger(__name__)
 
 RETRY_DELAY = 5.0
-# How long after connecting we keep checking whether OpenRGB has detected
-# more devices. Only matters right after boot; each check is a new SDK
-# connection, so don't do it forever.
+# How long after connecting we keep checking whether OpenRGB's device list
+# changed. Only matters right after boot; each check is a new SDK
+# connection, so don't do it forever. (While OpenRGB is unreachable we poll
+# indefinitely: refused connections cost nothing.)
 DETECTION_WATCH = 120.0
 DETECTION_POLL = 10.0
 
@@ -123,7 +125,7 @@ class Daemon:
             try:
                 cfg = config.load(self.config_path)
                 # Never launch OpenRGB ourselves: its Windows service owns that.
-                session = Session(cfg, launch_openrgb=False)
+                session = Session(cfg, launch_openrgb=False, require_openrgb=False)
             except Exception as exc:
                 log.warning("could not open devices (%s); retrying in %.0fs", exc, RETRY_DELAY)
                 self._stop.wait(RETRY_DELAY)
@@ -161,22 +163,26 @@ class Daemon:
                 self._stop.wait(2.0)  # give USB devices a moment after wake
 
     def _watch_detection(self, cfg: config.Config, session: Session, engine: Engine) -> None:
-        """Restart the engine if OpenRGB reports more devices than we have."""
-        known = session.openrgb_device_count
+        """Restart the engine when OpenRGB appears or its device list changes."""
+        known = session.openrgb.server_fingerprint if session.openrgb else None
         deadline = time.monotonic() + DETECTION_WATCH
-        while time.monotonic() < deadline:
+        while known is None or time.monotonic() < deadline:
             if engine.wait_stopped(DETECTION_POLL):
                 return
             try:
                 client = OpenRGBClient(cfg.openrgb_host, cfg.openrgb_port, name="rgbctl-watch")
-                count = len(client.devices)
+                current = fingerprint(client)
                 client.disconnect()
             except Exception:
                 continue
-            if count > known:
-                log.info("OpenRGB now reports %d devices (had %d); reconnecting", count, known)
-                engine.stop()
-                return
+            if known is None:
+                log.info("OpenRGB is up; reconnecting")
+            elif current != known:
+                log.info("OpenRGB device list changed; reconnecting")
+            else:
+                continue
+            engine.stop()
+            return
 
 
 class _Handler(socketserver.StreamRequestHandler):
