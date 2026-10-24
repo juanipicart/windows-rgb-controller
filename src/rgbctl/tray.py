@@ -15,6 +15,7 @@ from rgbctl.effects import hsv
 from rgbctl.window import EFFECTS, ControlWindow, color_changes, matches, toggle_device
 
 BRIGHTNESS = [100, 75, 50, 25]
+SPEEDS = [0.5, 1.0, 1.5, 2.0]
 
 
 def icon_image(size: int = 64) -> Image.Image:
@@ -71,6 +72,16 @@ def run_tray(daemon: Daemon) -> None:
         for pct in BRIGHTNESS
     ]
 
+    speed_items = [
+        pystray.MenuItem(
+            f"{speed:g}x",
+            setter({"speed": speed}),
+            checked=checker({"speed": speed}),
+            radio=True,
+        )
+        for speed in SPEEDS
+    ]
+
     def device_items():
         # Called each time the menu opens: devices come and go on reconnect.
         def item(key: str) -> pystray.MenuItem:
@@ -99,6 +110,7 @@ def run_tray(daemon: Daemon) -> None:
         *effect_items,
         pystray.Menu.SEPARATOR,
         pystray.MenuItem("Color...", color_action),
+        pystray.MenuItem("Speed", pystray.Menu(*speed_items)),
         pystray.MenuItem("Brightness", pystray.Menu(*brightness_items)),
         pystray.MenuItem("Devices", pystray.Menu(device_items)),
         pystray.MenuItem("Off", setter({"name": "off"}), checked=checker({"name": "off"}), radio=True),

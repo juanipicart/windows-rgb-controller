@@ -88,22 +88,25 @@ def cmd_set(args: argparse.Namespace) -> int:
 
 
 def cmd_effect(args: argparse.Namespace) -> int:
-    spec = normalize_spec(
-        {
-            "name": args.name,
-            "color": args.color or "purple",
-            "period": args.period,
-            "spread": args.spread,
-            "sync": args.sync,
-            "brightness": args.brightness,
-        }
-    )
-    # Leave out "disabled": the default (empty) would turn every device back on.
-    if args.duration is None and _send_to_daemon({k: v for k, v in spec.items() if k != "disabled"}):
+    changes: dict[str, Any] = {
+        "name": args.name,
+        "color": args.color or "purple",
+        "period": args.period,
+        "spread": args.spread,
+        "sync": args.sync,
+        "brightness": args.brightness,
+    }
+    # Only send speed when given, so the daemon keeps the one set in the UI.
+    if args.speed is not None:
+        changes["speed"] = args.speed
+    spec = normalize_spec(changes)
+    if args.duration is None and _send_to_daemon(changes):
         return 0
 
     session = _session(args)
-    engine = Engine(session.devices, fps=args.fps, brightness=spec["brightness"], sync=spec["sync"])
+    engine = Engine(
+        session.devices, fps=args.fps, brightness=spec["brightness"], sync=spec["sync"], speed=spec["speed"]
+    )
     print(f"Running {args.name} on {len(engine.devices)} devices at {args.fps:g} fps (Ctrl+C to stop)")
     try:
         engine.run(from_spec(spec), duration=args.duration)
@@ -234,6 +237,7 @@ def cmd_status(args: argparse.Namespace) -> int:
     spec = status["spec"]
     print(f"effect:     {spec['name']}" + (" (synced)" if spec["name"] == "wave" and spec["sync"] else ""))
     print(f"color:      {spec['color']}")
+    print(f"speed:      {spec['speed']:g}x")
     print(f"brightness: {spec['brightness']:.0%}")
     off = set(spec["disabled"])
     names = [f"{key} (off)" if key in off else key for key in status["devices"]]
@@ -282,7 +286,8 @@ def main(argv: list[str] | None = None) -> int:
     p_fx = sub.add_parser("effect", help="run an animated effect (via the daemon if it's running)")
     p_fx.add_argument("name", choices=[n for n in EFFECT_NAMES if n != "off"])
     p_fx.add_argument("color", nargs="?", help="color (ignored by rainbow, wave and fire)")
-    p_fx.add_argument("--period", type=float, help="seconds per cycle")
+    p_fx.add_argument("--speed", type=float, help="multiplier on the effect's default speed (0.25-4)")
+    p_fx.add_argument("--period", type=float, help="seconds per cycle at 1x speed")
     p_fx.add_argument("--spread", type=float, default=1.0, help="rainbows/bands across the strip (wave, color_wave)")
     p_fx.add_argument("--sync", action="store_true", help="every device shows the same pattern")
     p_fx.add_argument("--fps", type=float, default=30.0)

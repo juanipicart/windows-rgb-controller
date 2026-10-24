@@ -211,12 +211,26 @@ EFFECT_NAMES = (
     "off",
 )
 
+# Seconds per cycle at speed 1.0.
+DEFAULT_PERIODS = {
+    "breathing": 4.0,
+    "rainbow": 10.0,
+    "wave": 5.0,
+    "color_wave": 4.0,
+    "comet": 3.0,
+    "twinkle": 3.0,
+    "heartbeat": 1.2,
+    "fire": 1.0,
+}
+MIN_SPEED, MAX_SPEED = 0.25, 4.0
+
 # A spec is the serializable description of what's running: shared by the
 # CLI, the daemon's saved state and the tray menu.
 DEFAULT_SPEC: dict[str, Any] = {
     "name": "wave",
     "color": "purple",
-    "period": None,  # None = the effect's own default
+    "period": None,  # seconds per cycle; None = the effect's own default
+    "speed": 1.0,  # how fast effect time runs (applied by the engine)
     "spread": 1.0,
     "sync": True,
     "brightness": 1.0,
@@ -232,6 +246,7 @@ def normalize_spec(spec: Mapping[str, Any]) -> dict[str, Any]:
     Color.parse(out["color"])
     if out["period"] is not None and float(out["period"]) <= 0:
         raise ValueError("period must be positive")
+    out["speed"] = min(max(float(out["speed"]), MIN_SPEED), MAX_SPEED)
     out["brightness"] = min(max(float(out["brightness"]), 0.0), 1.0)
     out["sync"] = bool(out["sync"])
     if not isinstance(out["disabled"], (list, tuple, set)):
@@ -243,26 +258,26 @@ def normalize_spec(spec: Mapping[str, Any]) -> dict[str, Any]:
 def from_spec(spec: Mapping[str, Any]) -> Effect:
     spec = normalize_spec(spec)
     color = Color.parse(spec["color"])
-    period = spec["period"]
+    period = spec["period"] or DEFAULT_PERIODS.get(spec["name"], 1.0)
     match spec["name"]:
         case "static":
             return Static(color)
         case "off":
             return Static(Color(0, 0, 0))
         case "breathing":
-            return Breathing(color, period=period or 4.0)
+            return Breathing(color, period=period)
         case "rainbow":
-            return Rainbow(period=period or 10.0)
+            return Rainbow(period=period)
         case "wave":
-            return Wave(period=period or 5.0, spread=spec["spread"])
+            return Wave(period=period, spread=spec["spread"])
         case "color_wave":
-            return ColorWave(color, period=period or 4.0, spread=spec["spread"])
+            return ColorWave(color, period=period, spread=spec["spread"])
         case "comet":
-            return Comet(color, period=period or 3.0)
+            return Comet(color, period=period)
         case "twinkle":
-            return Twinkle(color, period=period or 3.0)
+            return Twinkle(color, period=period)
         case "heartbeat":
-            return Heartbeat(color, period=period or 1.2)
+            return Heartbeat(color, period=period)
         case "fire":
-            return Fire(period=period or 1.0)
+            return Fire(period=period)
     raise AssertionError(spec["name"])

@@ -58,8 +58,12 @@ class Engine:
         sync: bool = False,
         effect: Effect | None = None,
         disabled: set[str] | None = None,
+        speed: float = 1.0,
     ) -> None:
         self.devices = [d for d in devices if d.led_count > 0]
+        # Scales how fast effect time runs. Scaling time (rather than each
+        # effect's period) keeps animations continuous when speed changes.
+        self.speed = speed
         self.disabled = set(disabled or ())
         self.fps = fps
         self.brightness = brightness
@@ -75,8 +79,11 @@ class Engine:
         brightness: float | None = None,
         sync: bool | None = None,
         disabled: set[str] | None = None,
+        speed: float | None = None,
     ) -> None:
         """Change what's running; safe to call from another thread."""
+        if speed is not None:
+            self.speed = speed
         if disabled is not None:
             self.disabled = set(disabled)
         if effect is not None:
@@ -125,14 +132,17 @@ class Engine:
             self.effect = effect
         start = time.perf_counter()
         next_frame = start
+        last_tick = start
+        effect_t = 0.0  # effect time: advances at self.speed
         last_wall = time.time()
         failing_since: float | None = None
         failing: set[str] = set()
 
         while not self._stopped.is_set():
             now = time.perf_counter()
-            t = now - start
-            if duration is not None and t >= duration:
+            effect_t += (now - last_tick) * self.speed
+            last_tick = now
+            if duration is not None and now - start >= duration:
                 return StopReason.DURATION
 
             wall = time.time()
@@ -143,7 +153,7 @@ class Engine:
             effect = self.effect
             interval = self.IDLE_INTERVAL
             if effect is not None:
-                if self.render_frame(effect, t, failing):
+                if self.render_frame(effect, effect_t, failing):
                     failing_since = None
                     failing.clear()
                 elif failing_since is None:

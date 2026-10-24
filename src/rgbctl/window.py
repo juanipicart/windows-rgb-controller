@@ -8,6 +8,7 @@ Closing the window hides it; the thread stays up for the next open.
 from __future__ import annotations
 
 import ctypes
+import math
 import threading
 import tkinter as tk
 from tkinter import ttk
@@ -18,6 +19,7 @@ from PIL import Image, ImageTk
 from rgbctl.color import Color
 from rgbctl.colorpicker import choose_color
 from rgbctl.daemon import Daemon
+from rgbctl.effects import MAX_SPEED, MIN_SPEED
 
 EFFECTS = [
     ("Wave (synced)", {"name": "wave", "sync": True}),
@@ -35,6 +37,15 @@ EFFECTS = [
 # Effects that ignore the color; picking one switches to static.
 COLORLESS = {"wave", "rainbow", "fire", "off"}
 POLL_MS = 250
+# Effects with nothing to speed up.
+STILL = {"static", "off"}
+
+
+def slider_to_speed(value: float) -> float:
+    """The speed slider is log2(speed), so 1x sits in the middle."""
+    if abs(value) < 0.1:  # snap to 1x: hard to hit exactly by dragging
+        return 1.0
+    return round(2**value, 2)
 
 
 def matches(spec: dict[str, Any], want: dict[str, Any]) -> bool:
@@ -127,8 +138,23 @@ class ControlWindow:
         hex_entry.bind("<FocusOut>", lambda e: self._apply_hex())
         ttk.Button(color, text="Pick...", command=lambda: self._pick_color(root)).grid(row=0, column=2)
 
+        speed = ttk.LabelFrame(frame, text="Speed", padding=(12, 8))
+        speed.grid(row=2, column=0, sticky="ew", pady=(12, 0))
+        speed.columnconfigure(0, weight=1)
+        self.speed_var = tk.DoubleVar()
+        self.speed_scale = ttk.Scale(
+            speed, from_=math.log2(MIN_SPEED), to=math.log2(MAX_SPEED), variable=self.speed_var, length=200
+        )
+        self.speed_scale.grid(row=0, column=0, sticky="ew")
+        self.speed_scale.bind("<ButtonRelease-1>", lambda e: self._apply({"speed": slider_to_speed(self.speed_var.get())}))
+        self.speed_label = ttk.Label(speed, width=5, anchor="e")
+        self.speed_label.grid(row=0, column=1)
+        self.speed_var.trace_add(
+            "write", lambda *a: self.speed_label.config(text=f"{slider_to_speed(self.speed_var.get()):g}x")
+        )
+
         bright = ttk.LabelFrame(frame, text="Brightness", padding=(12, 8))
-        bright.grid(row=2, column=0, sticky="ew", pady=(12, 0))
+        bright.grid(row=3, column=0, sticky="ew", pady=(12, 0))
         bright.columnconfigure(0, weight=1)
         self.bright_var = tk.DoubleVar()
         scale = ttk.Scale(bright, from_=0, to=100, variable=self.bright_var, length=200)
@@ -141,7 +167,7 @@ class ControlWindow:
         self.bright_var.trace_add("write", lambda *a: self.bright_label.config(text=f"{round(self.bright_var.get())}%"))
 
         self.devices_frame = ttk.LabelFrame(frame, text="Devices", padding=(12, 6))
-        self.devices_frame.grid(row=3, column=0, sticky="ew", pady=(12, 0))
+        self.devices_frame.grid(row=4, column=0, sticky="ew", pady=(12, 0))
         self.device_vars: dict[str, tk.BooleanVar] = {}
 
     def _poll(self, root: tk.Tk) -> None:
@@ -189,6 +215,8 @@ class ControlWindow:
         if self.hex_var.get().strip().lower() != str(color):
             self.hex_var.set(str(color))
         self.bright_var.set(spec["brightness"] * 100)
+        self.speed_var.set(math.log2(spec["speed"]))
+        self.speed_scale.state(["disabled"] if spec["name"] in STILL else ["!disabled"])
 
     def _apply(self, changes: dict[str, Any]) -> None:
         self.daemon.apply(changes)

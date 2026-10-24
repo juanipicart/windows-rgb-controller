@@ -87,7 +87,11 @@ class Daemon:
             self._save_state()
             if self._engine is not None:
                 self._engine.update(
-                    effect=effect, brightness=spec["brightness"], sync=spec["sync"], disabled=set(spec["disabled"])
+                    effect=effect,
+                    brightness=spec["brightness"],
+                    sync=spec["sync"],
+                    disabled=set(spec["disabled"]),
+                    speed=spec["speed"],
                 )
         log.info("applied %s", spec)
         self._changed()
@@ -155,6 +159,7 @@ class Daemon:
                     sync=self.spec["sync"],
                     effect=from_spec(self.spec),
                     disabled=set(self.spec["disabled"]),
+                    speed=self.spec["speed"],
                 )
                 self._engine = engine
             watcher = threading.Thread(
