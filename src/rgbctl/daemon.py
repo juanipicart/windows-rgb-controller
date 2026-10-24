@@ -53,6 +53,9 @@ class Daemon:
         self.spec = self._load_state()
         self.devices: list[str] = []
         self.on_quit: Callable[[], None] | None = None
+        # Called after the spec or the device list changes (e.g. to refresh
+        # the tray menu, which Windows otherwise keeps as first built).
+        self.on_change: Callable[[], None] | None = None
         self._lock = threading.Lock()
         self._engine: Engine | None = None
         self._stop = threading.Event()
@@ -83,9 +86,19 @@ class Daemon:
             self.spec = spec
             self._save_state()
             if self._engine is not None:
-                self._engine.update(effect=effect, brightness=spec["brightness"], sync=spec["sync"])
+                self._engine.update(
+                    effect=effect, brightness=spec["brightness"], sync=spec["sync"], disabled=set(spec["disabled"])
+                )
         log.info("applied %s", spec)
+        self._changed()
         return spec
+
+    def _changed(self) -> None:
+        if self.on_change is not None:
+            try:
+                self.on_change()
+            except Exception:
+                log.exception("change callback failed")
 
     # -- lifecycle ----------------------------------------------------------
 
@@ -131,7 +144,8 @@ class Daemon:
                 self._stop.wait(RETRY_DELAY)
                 continue
 
-            self.devices = [d.name for d in session.devices]
+            self.devices = [d.key for d in session.devices]
+            self._changed()
             log.info("devices: %s", ", ".join(self.devices) or "none")
             with self._lock:
                 engine = Engine(
@@ -140,6 +154,7 @@ class Daemon:
                     brightness=self.spec["brightness"],
                     sync=self.spec["sync"],
                     effect=from_spec(self.spec),
+                    disabled=set(self.spec["disabled"]),
                 )
                 self._engine = engine
             watcher = threading.Thread(

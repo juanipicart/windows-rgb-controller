@@ -54,8 +54,11 @@ DEFAULT_P2 = 0x06
 
 HW_STATIC = 0
 HW_RAINBOW_WAVE = 1
+HW_STARS = 5
 HW_COLOR_CYCLE = 7
 HW_BREATHING = 8
+HW_WAVE = 9
+HW_HEARTBEAT = 11
 
 # Each write lands in the keyboard's flash; never write more often than this.
 MIN_WRITE_INTERVAL = 1.0
@@ -77,7 +80,7 @@ def hardware_state(effect: Effect, brightness: float) -> HardwareState | None:
     if color is not None and brightness < 1.0:
         color = scale(color, brightness)
     match effect.name:
-        case "static":  # also "off" (static black)
+        case "static" | "fire":  # also "off" (static black); fire: its representative color
             return HardwareState(HW_STATIC, color)
         case "breathing":
             return HardwareState(HW_BREATHING, color)
@@ -85,6 +88,12 @@ def hardware_state(effect: Effect, brightness: float) -> HardwareState | None:
             return HardwareState(HW_RAINBOW_WAVE, None)
         case "rainbow":
             return HardwareState(HW_COLOR_CYCLE, None)
+        case "color_wave" | "comet":
+            return HardwareState(HW_WAVE, color)
+        case "twinkle":
+            return HardwareState(HW_STARS, color)
+        case "heartbeat":
+            return HardwareState(HW_HEARTBEAT, color)
     return None
 
 

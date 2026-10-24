@@ -37,10 +37,14 @@ def _from_colorref(ref: int) -> Color:
     return Color(ref & 0xFF, (ref >> 8) & 0xFF, (ref >> 16) & 0xFF)
 
 
-def choose_color(initial: Color) -> Color | None:
-    """Show the dialog; returns the picked color, or None if cancelled."""
+def choose_color(initial: Color, owner: int | None = None) -> Color | None:
+    """Show the dialog; returns the picked color, or None if cancelled.
+
+    With an owner window handle the dialog is modal to that window.
+    """
     cc = _CHOOSECOLORW()
     cc.lStructSize = ctypes.sizeof(cc)
+    cc.hwndOwner = owner
     cc.rgbResult = _to_colorref(initial)
     cc.lpCustColors = _custom_colors
     cc.Flags = CC_RGBINIT | CC_FULLOPEN

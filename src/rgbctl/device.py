@@ -19,6 +19,9 @@ if TYPE_CHECKING:
 
 class Device(ABC):
     name: str
+    # Unique within a session (set by Session): the name, plus " #2", " #3"...
+    # when several devices share one, like identical RAM sticks.
+    key: str
     kind: str
     led_count: int
     backend: str

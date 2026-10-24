@@ -56,6 +56,7 @@ class Session:
         except BaseException:
             self.close()
             raise
+        assign_keys(self.devices)
 
     def _add(self, backend: Backend) -> None:
         self.backends.append(backend)
@@ -65,3 +66,11 @@ class Session:
         for backend in self.backends:
             backend.close()
         self.backends.clear()
+
+
+def assign_keys(devices: list[Device]) -> None:
+    """Give each device a unique key, numbering repeated names in order."""
+    seen: dict[str, int] = {}
+    for dev in devices:
+        n = seen[dev.name] = seen.get(dev.name, 0) + 1
+        dev.key = dev.name if n == 1 else f"{dev.name} #{n}"

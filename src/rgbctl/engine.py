@@ -8,10 +8,15 @@ import time
 from collections.abc import Sequence
 from enum import Enum
 
+from rgbctl.color import Color
 from rgbctl.device import Device
-from rgbctl.effects import Effect, scale
+from rgbctl.effects import Effect, Static, scale
 
 log = logging.getLogger(__name__)
+
+# What a turned-off device gets. Sent like any frame (rather than leaving the
+# device alone) so it really is dark, not frozen on the last color.
+DARK = Static(Color(0, 0, 0))
 
 
 def layout(devices: Sequence[Device], sync: bool = False) -> list[list[float]]:
@@ -52,8 +57,10 @@ class Engine:
         brightness: float = 1.0,
         sync: bool = False,
         effect: Effect | None = None,
+        disabled: set[str] | None = None,
     ) -> None:
         self.devices = [d for d in devices if d.led_count > 0]
+        self.disabled = set(disabled or ())
         self.fps = fps
         self.brightness = brightness
         self.sync = sync
@@ -67,8 +74,11 @@ class Engine:
         effect: Effect | None = None,
         brightness: float | None = None,
         sync: bool | None = None,
+        disabled: set[str] | None = None,
     ) -> None:
         """Change what's running; safe to call from another thread."""
+        if disabled is not None:
+            self.disabled = set(disabled)
         if effect is not None:
             self.effect = effect
         if brightness is not None:
@@ -89,12 +99,14 @@ class Engine:
         """Render one frame; returns False if any device failed."""
         ok = True
         brightness = self.brightness
+        disabled = self.disabled
         for dev, pos in zip(self.devices, self.positions):
+            dev_effect = DARK if getattr(dev, "key", dev.name) in disabled else effect
             try:
                 if dev.hardware_effects:
-                    dev.apply_effect(effect, brightness)
+                    dev.apply_effect(dev_effect, brightness)
                 else:
-                    colors = effect.render(pos, t)
+                    colors = dev_effect.render(pos, t)
                     if brightness < 1.0:
                         colors = [scale(c, brightness) for c in colors]
                     dev.set_colors(colors)

@@ -32,7 +32,7 @@ def _send_to_daemon(spec: dict[str, Any]) -> bool:
     except ipc.DaemonNotRunning:
         return False
     applied = reply["spec"]
-    print(f"daemon: {applied['name']} {applied['color'] if applied['name'] in ('static', 'breathing') else ''}".rstrip())
+    print(f"daemon: {applied['name']} {applied['color'] if applied['name'] not in ('rainbow', 'wave', 'fire', 'off') else ''}".rstrip())
     return True
 
 
@@ -98,7 +98,8 @@ def cmd_effect(args: argparse.Namespace) -> int:
             "brightness": args.brightness,
         }
     )
-    if args.duration is None and _send_to_daemon(spec):
+    # Leave out "disabled": the default (empty) would turn every device back on.
+    if args.duration is None and _send_to_daemon({k: v for k, v in spec.items() if k != "disabled"}):
         return 0
 
     session = _session(args)
@@ -199,6 +200,31 @@ def cmd_stop(args: argparse.Namespace) -> int:
     return 0
 
 
+def cmd_device(args: argparse.Namespace) -> int:
+    try:
+        status = ipc.request({"cmd": "status"})
+    except ipc.DaemonNotRunning:
+        print("Daemon not running; start it with `rgbctl start`.", file=sys.stderr)
+        return 1
+    devices, disabled = status["devices"], set(status["spec"]["disabled"])
+    if args.action == "list":
+        for key in devices:
+            print(f"  {'off' if key in disabled else 'on ':<4} {key}")
+        return 0
+    # Exact key, else a unique case-insensitive substring (e.g. "g502").
+    wanted = args.device.lower()
+    found = [k for k in devices if k.lower() == wanted] or [k for k in devices if wanted in k.lower()]
+    if len(found) != 1:
+        problem = "matches several devices" if found else "matches no device"
+        print(f"{args.device!r} {problem}: {', '.join(found or devices)}", file=sys.stderr)
+        return 1
+    key = found[0]
+    disabled = disabled - {key} if args.action == "on" else disabled | {key}
+    ipc.request({"cmd": "apply", "spec": {"disabled": sorted(disabled)}})
+    print(f"{key}: {args.action}")
+    return 0
+
+
 def cmd_status(args: argparse.Namespace) -> int:
     try:
         status = ipc.request({"cmd": "status"})
@@ -209,7 +235,9 @@ def cmd_status(args: argparse.Namespace) -> int:
     print(f"effect:     {spec['name']}" + (" (synced)" if spec["name"] == "wave" and spec["sync"] else ""))
     print(f"color:      {spec['color']}")
     print(f"brightness: {spec['brightness']:.0%}")
-    print(f"devices:    {', '.join(status['devices']) or 'none (connecting...)'}")
+    off = set(spec["disabled"])
+    names = [f"{key} (off)" if key in off else key for key in status["devices"]]
+    print(f"devices:    {', '.join(names) or 'none (connecting...)'}")
     return 0
 
 
@@ -253,14 +281,19 @@ def main(argv: list[str] | None = None) -> int:
 
     p_fx = sub.add_parser("effect", help="run an animated effect (via the daemon if it's running)")
     p_fx.add_argument("name", choices=[n for n in EFFECT_NAMES if n != "off"])
-    p_fx.add_argument("color", nargs="?", help="color for static/breathing")
+    p_fx.add_argument("color", nargs="?", help="color (ignored by rainbow, wave and fire)")
     p_fx.add_argument("--period", type=float, help="seconds per cycle")
-    p_fx.add_argument("--spread", type=float, default=1.0, help="rainbows across the strip (wave)")
+    p_fx.add_argument("--spread", type=float, default=1.0, help="rainbows/bands across the strip (wave, color_wave)")
     p_fx.add_argument("--sync", action="store_true", help="every device shows the same pattern")
     p_fx.add_argument("--fps", type=float, default=30.0)
     p_fx.add_argument("--brightness", type=float, default=1.0, help="0.0-1.0")
     p_fx.add_argument("--duration", type=float, help="run directly for N seconds instead of via the daemon")
     p_fx.set_defaults(func=cmd_effect)
+
+    p_dev = sub.add_parser("device", help="turn one device's lighting off or back on (via the daemon)")
+    p_dev.add_argument("action", choices=["on", "off", "list"])
+    p_dev.add_argument("device", nargs="?", default="", help="device name, or a unique part of it (e.g. g502)")
+    p_dev.set_defaults(func=cmd_device)
 
     p_daemon = sub.add_parser("daemon", help="run the background service in this process")
     p_daemon.add_argument("--no-tray", action="store_true", help="no system tray icon")
